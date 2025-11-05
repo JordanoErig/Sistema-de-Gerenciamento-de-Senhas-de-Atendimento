@@ -11,7 +11,6 @@ import tkinter as tk
 from tkinter import filedialog
 from collections import deque
 import random
-import json
 import datetime
 
 # Dependência: ttkbootstrap
@@ -178,7 +177,7 @@ def ativar_desativar_posto(posto_id: int) -> tuple:
 class SistemaSenhaApp(tb.Window):
     def __init__(self):
         super().__init__(themename="solar")
-        self.title("Sistema de Senhas — Modo Operador")
+        self.title("Sistema de Gerenciamento de Senhas de Atendimento - Trabalho GB - EDL_2025/2")
         self.geometry("1220x760")
         self.minsize(1000, 620)
 
@@ -199,12 +198,24 @@ class SistemaSenhaApp(tb.Window):
                 self.status_label.configure(bootstyle=bootstyle)
             except Exception:
                 pass
-            if hasattr(self, "_status_after_id") and self._status_after_id is not None:
+            # restart the status clear timer using helpers
+            try:
+                self._cancel_status_timer()
+            except Exception:
+                # fallback if helper not present: safe cancel
+                if hasattr(self, "_status_after_id") and self._status_after_id is not None:
+                    try:
+                        self.after_cancel(self._status_after_id)
+                    except Exception:
+                        pass
+            try:
+                self._start_status_timer()
+            except Exception:
+                # last-resort fallback
                 try:
-                    self.after_cancel(self._status_after_id)
+                    self._status_after_id = self.after(STATUS_TIMEOUT_MS, self.clear_status)
                 except Exception:
-                    pass
-            self._status_after_id = self.after(STATUS_TIMEOUT_MS, self.clear_status)
+                    self._status_after_id = None
         except Exception:
             pass
 
@@ -218,11 +229,30 @@ class SistemaSenhaApp(tb.Window):
                     pass
             except Exception:
                 pass
-        if hasattr(self, "_status_after_id"):
+        # cancel any pending timer that would clear the status
+        try:
+            self._cancel_status_timer()
+        except Exception:
+            if hasattr(self, "_status_after_id") and self._status_after_id is not None:
+                try:
+                    self.after_cancel(self._status_after_id)
+                except Exception:
+                    pass
+                self._status_after_id = None
+
+    # status timer helpers
+    def _cancel_status_timer(self):
+        if hasattr(self, "_status_after_id") and self._status_after_id is not None:
             try:
                 self.after_cancel(self._status_after_id)
             except Exception:
                 pass
+            self._status_after_id = None
+
+    def _start_status_timer(self):
+        try:
+            self._status_after_id = self.after(STATUS_TIMEOUT_MS, self.clear_status)
+        except Exception:
             self._status_after_id = None
 
     def _build_layout(self):
@@ -297,21 +327,14 @@ class SistemaSenhaApp(tb.Window):
 
         self.toggle_buttons = []
         for p in postos:
-            row = tb.Frame(left_ctrl)
-            row.pack(fill="x", pady=4)
-            lbl = tb.Label(row, text=f"Posto {p['id']}", width=8)
-            lbl.pack(side="left", padx=(4, 8))
-            btn = tb.Button(row, text="Ativar/Desativar", bootstyle="secondary", width=18, command=lambda pid=p['id']: self.ui_toggle_posto(pid))
-            btn.pack(side="left")
+            btn = self._create_toggle_row(left_ctrl, p['id'])
             self.toggle_buttons.append(btn)
 
         tb.Separator(left_ctrl).pack(fill="x", pady=10)
 
         btn_enc = tb.Button(left_ctrl, text="Encerrar Atendimento (Mostrar Pilha)", bootstyle="dark", width=30, command=self.ui_encerrar)
         btn_enc.pack(pady=6)
-        btn_export = tb.Button(left_ctrl, text="Exportar log (JSON)", bootstyle="outline", width=30, command=self.ui_exportar_log)
-        btn_export.pack(pady=6)
-
+        
         # right panel
         right_panel = tb.Frame(main_frame)
         right_panel.pack(side="right", fill="both", expand=True)
@@ -342,15 +365,8 @@ class SistemaSenhaApp(tb.Window):
 
         self.posto_widgets = []
         for p in postos:
-            frame = tb.Frame(self.postos_container, bootstyle="light", padding=8, relief="flat")
-            lbl = tb.Label(frame, text=f"Posto {p['id']}", font=("Segoe UI", 11, "bold"))
-            lbl.pack(anchor="nw")
-            status_var = tk.StringVar()
-            status_lbl = tb.Label(frame, textvariable=status_var)
-            status_lbl.pack(anchor="nw", pady=(6, 4))
-            btn_fin = tb.Button(frame, text="Finalizar Atendimento", bootstyle="success", width=16, command=lambda pid=p['id']: self.ui_finalizar_posto(pid))
-            btn_fin.pack(anchor="se", pady=(6, 0))
-            self.posto_widgets.append({"frame": frame, "status_var": status_var, "btn_fin": btn_fin})
+            widget = self._create_posto_widget(p)
+            self.posto_widgets.append(widget)
 
         self._arranjar_postos_grid()
 
@@ -371,6 +387,29 @@ class SistemaSenhaApp(tb.Window):
         cols = 3
         for idx, w in enumerate(self.posto_widgets):
             w["frame"].pack(side="left", padx=8, pady=8, ipadx=10, ipady=6)
+
+    # helper to build a toggle row (label + button) for managing postos
+    def _create_toggle_row(self, parent, pid: int):
+        row = tb.Frame(parent)
+        row.pack(fill="x", pady=4)
+        lbl = tb.Label(row, text=f"Posto {pid}", width=8)
+        lbl.pack(side="left", padx=(4, 8))
+        btn = tb.Button(row, text="Ativar/Desativar", bootstyle="secondary", width=18, command=lambda pid=pid: self.ui_toggle_posto(pid))
+        btn.pack(side="left")
+        return btn
+
+    # helper to create the posto widget (frame, status var and finalize button)
+    def _create_posto_widget(self, p: dict) -> dict:
+        pid = p["id"]
+        frame = tb.Frame(self.postos_container, bootstyle="light", padding=8, relief="flat")
+        lbl = tb.Label(frame, text=f"Posto {pid}", font=("Segoe UI", 11, "bold"))
+        lbl.pack(anchor="nw")
+        status_var = tk.StringVar()
+        status_lbl = tb.Label(frame, textvariable=status_var)
+        status_lbl.pack(anchor="nw", pady=(6, 4))
+        btn_fin = tb.Button(frame, text="Finalizar Atendimento", bootstyle="success", width=16, command=lambda pid=pid: self.ui_finalizar_posto(pid))
+        btn_fin.pack(anchor="se", pady=(6, 0))
+        return {"frame": frame, "status_var": status_var, "btn_fin": btn_fin}
 
     # UI methods
     def ui_emitir_N(self):
@@ -431,7 +470,10 @@ class SistemaSenhaApp(tb.Window):
         for i, s in enumerate(reversed(pilha_atendidos), start=1):
             texto += f"{i:03d}: {s}\n"
         texto += f"\nTotal atendidos: {contadores['atendidas']}\nDesistências: {contadores['desistencias']}"
-        top = tb.Toplevel(self)
+        # use explicit keyword to avoid static type-checker confusion about
+        # the first positional parameter (some stubs expect a 'title: str').
+        # At runtime this is equivalent to tb.Toplevel(self).
+        top = tb.Toplevel(master=self)
         top.title("Encerramento - Pilha de Atendidos")
         txt = tk.Text(top, width=60, height=30)
         txt.pack(fill="both", expand=True)
@@ -447,16 +489,6 @@ class SistemaSenhaApp(tb.Window):
             "contadores": contadores,
             "postos": [{"id": p["id"], "active": p["active"], "current": p["current"]} for p in postos]
         }
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")], title="Salvar log como...")
-        if not path:
-            self.set_status("Exportação cancelada.", level="secondary")
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(log, f, indent=2, ensure_ascii=False)
-            self.set_status(f"Log salvo em: {path}", level="success")
-        except Exception as e:
-            self.set_status(f"Erro ao salvar: {e}", level="danger")
 
     # atualizar interface
     def atualizar_interface(self):
@@ -467,12 +499,41 @@ class SistemaSenhaApp(tb.Window):
         for s in list(fila_prior):
             self.list_fila_p.insert(tk.END, s)
 
+                # total de pessoas na fila
         total_fila = len(fila_normal) + len(fila_prior)
         self.lbl_total_fila.configure(text=f"Fila total: {total_fila}")
 
-        prox_two = peek_next_types(2)
-        prox_two_text = ", ".join([t if t is not None else "-" for t in prox_two])
+        # calcular as próximas 2 SENHAS (códigos) seguindo alternância 2N:1P sem consumir filas reais
+        temp_idx = altern_index
+        temp_N = deque(fila_normal)   # cópias locais
+        temp_P = deque(fila_prior)
+        next_codes = []
+        checks = 0
+        # tenta seguir a sequência altern_cycle respeitando disponibilidade
+        while len(next_codes) < 2 and checks < 20:
+            tipo = altern_cycle[temp_idx % len(altern_cycle)]
+            if tipo == "N" and len(temp_N) > 0:
+                next_codes.append(temp_N[0])
+                temp_N.popleft()
+                temp_idx += 1
+            elif tipo == "P" and len(temp_P) > 0:
+                next_codes.append(temp_P[0])
+                temp_P.popleft()
+                temp_idx += 1
+            else:
+                temp_idx += 1
+            checks += 1
+        # se ainda faltarem, preenche com qualquer senha disponível (prioritiza P conforme regra anterior)
+        while len(next_codes) < 2:
+            if len(temp_P) > 0:
+                next_codes.append(temp_P[0]); temp_P.popleft()
+            elif len(temp_N) > 0:
+                next_codes.append(temp_N[0]); temp_N.popleft()
+            else:
+                next_codes.append("-")
+        prox_two_text = ", ".join(next_codes)
         self.lbl_prox_duas.configure(text=f"Próximas: {prox_two_text}")
+
 
         next_label = "-"
         temp_idx = altern_index
