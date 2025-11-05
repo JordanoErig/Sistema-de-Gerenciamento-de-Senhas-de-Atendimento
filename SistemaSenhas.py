@@ -175,7 +175,7 @@ def alternar_posto(posto_id: int) -> tuple:
 class App(tb.Window):
     def __init__(self):
         super().__init__(themename="solar")
-        self.title("Sistema de Senhas — EDL 2025/2")
+        self.title("Sistema de Senhas — Trabalho GB - EDL 2025/2")
         self.geometry("1220x760")
         self.minsize(1000, 620)
 
@@ -492,3 +492,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
